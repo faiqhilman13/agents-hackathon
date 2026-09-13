@@ -1,0 +1,3 @@
+# Shell scripts must keep LF line endings or bash on macOS/Linux/WSL will choke
+# on "\r" characters (common when the repo is edited on Windows).
+*.sh text eol=lf
