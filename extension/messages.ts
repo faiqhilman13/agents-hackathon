@@ -39,7 +39,35 @@ export type ExtensionRequest =
   | { type: 'CAPTURE_AND_RESEARCH'; tabId: number; question?: string; collection?: string; enrich?: boolean }
   | { type: 'OPEN_LIBRARY'; researchId?: string }
   | { type: 'GET_EXTENSION_STATE' }
-  | { type: 'SETTINGS'; connectionToken: string };
+  | { type: 'SETTINGS'; connectionToken: string }
+  // Auto-read: the popup grants all-site access with one click, then turns the rail on everywhere.
+  | { type: 'SET_AUTO_READ'; enabled: boolean }
+  // Sent by the rail content script; the background identifies the tab from the sender.
+  | { type: 'RAIL_READY' }
+  | { type: 'RAIL_AUTO_READ' }
+  | { type: 'RAIL_STATUS' };
+
+export type RailResearch = {
+  id: string;
+  status: Research['status'];
+  progress: number;
+  stage: string;
+  hasBrief: boolean;
+  picks: number;
+  related: number;
+  fromHistory: boolean;
+  bridge: boolean;
+};
+
+export type RailStatus = {
+  tabId: number;
+  autoRead: boolean;
+  paired: boolean;
+  online: boolean;
+  research?: RailResearch;
+  // Set when the page could not be read automatically (too short, unsupported, or a server error).
+  skipped?: string;
+};
 
 export type ExtensionResponse<T extends object = Record<string, unknown>> =
   | ({ ok: true } & T)
@@ -51,6 +79,8 @@ export type ExtensionState = {
   researchByTab?: Record<string, string>;
   connectionToken: string;
   server: { ok: boolean; configured?: boolean; error?: string };
+  autoRead: boolean;
+  autoReadGranted: boolean;
 };
 
 export type TabAccess = {

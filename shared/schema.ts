@@ -43,12 +43,19 @@ export type Source = {
   // Reading memory: set on related sources after synthesis when recent reads exist; older records omit both.
   fromHistory?: boolean; readContext?: string;
 };
+export type SourcePick = { sourceId: string; role: 'canonical' | 'opposing' | 'unexpected'; whyItMatters: string };
+export type ReadLink = { researchId: string; title: string; url: string };
+export type ReadingBridge = { text: string; reads: ReadLink[] };
 export type Research = {
   id: string; requestId: string; status: 'queued' | 'running' | 'complete' | 'failed' | 'cancelled';
   stage: string; progress: number; createdAt: string; updatedAt: string; input: ResearchInput;
   sources: Source[]; brief?: Brief; mode: 'synthesis' | 'extractive' | 'demo';
   warnings: string[]; error?: string; notes: string; favorite: boolean; collection: string;
   inLibrary: boolean;
+  // Layer 1 (The Reader): up to three sharp related sources with a one-line reason. Older records omit it.
+  picks?: SourcePick[];
+  // Layer 3 (The Cartographer): how this page bridges two earlier reads. Older records omit it.
+  bridge?: ReadingBridge;
   messages?: { role:'user'|'assistant'; text:string; sourceIds?:string[]; createdAt:string }[];
 };
 export function arxivId(url: string): string | undefined {

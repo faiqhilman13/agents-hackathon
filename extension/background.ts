@@ -1,23 +1,31 @@
-import { arxivId, publicUrl, researchSchema, type Capture, type Research } from '../shared/schema';
+import { arxivId, normalizeUrl, publicUrl, researchSchema, type Capture, type Research } from '../shared/schema';
 import type {
   ExtensionError,
   ExtensionRequest,
   ExtensionResponse,
   ExtensionState,
   ExtensionTab,
+  RailResearch,
+  RailStatus,
   ResearchStarted,
   TabAccess,
 } from './messages';
 
 const API_ORIGIN = 'http://127.0.0.1:4317';
 const LIBRARY_URL = `${API_ORIGIN}/`;
-const STORAGE_KEYS = ['connectionToken', 'selectedTabId', 'latestResearchId', 'researchByTab'] as const;
+const STORAGE_KEYS = ['connectionToken', 'selectedTabId', 'latestResearchId', 'researchByTab', 'autoRead'] as const;
+const RAIL_SCRIPT_ID = 'margin-rail';
+const ALL_SITES = ['https://*/*', 'http://*/*'];
+// Pages with less readable text than this (menus, search results, sign-in pages) are not researched automatically.
+const AUTO_READ_MIN_CHARS = 600;
 
 type StoredState = {
   connectionToken?: string;
   selectedTabId?: number;
   latestResearchId?: string;
   researchByTab?: Record<string, string>;
+  // Auto-read is on by default once all-site access is granted; the popup can pause it.
+  autoRead?: boolean;
 };
 
 type ExtractorGlobal = {
@@ -226,9 +234,14 @@ async function serverStatus(): Promise<ExtensionState['server']> {
 }
 
 async function enqueue(tabId: number, question = '', collection = 'Reading list', enrich = true): Promise<ResearchStarted> {
+  const { connectionToken } = await storage();
+  if (!connectionToken?.trim()) throw failureError('NOT_PAIRED', 'Paste the connection token from the local Margin library first.');
+  return submitCapture(tabId, await captureTab(tabId), question, collection, enrich);
+}
+
+async function submitCapture(tabId: number, capture: Capture, question: string, collection: string, enrich: boolean): Promise<ResearchStarted> {
   const { connectionToken, researchByTab = {} } = await storage();
   if (!connectionToken?.trim()) throw failureError('NOT_PAIRED', 'Paste the connection token from the local Margin library first.');
-  const capture = await captureTab(tabId);
   const input = researchSchema.parse({ requestId: crypto.randomUUID(), capture, question, collection, enrich });
   let response: Response;
   try {
@@ -255,6 +268,137 @@ async function enqueue(tabId: number, question = '', collection = 'Reading list'
   return { research };
 }
 
+// ---------------------------------------------------------------------------
+// Auto-read and the always-on rail
+// ---------------------------------------------------------------------------
+const autoReading = new Set<number>();
+const skippedByTab = new Map<number, { url: string; reason: string }>();
+
+function pageKey(url: string): string {
+  try {
+    return normalizeUrl(url);
+  } catch {
+    return url;
+  }
+}
+
+async function autoReadGranted(): Promise<boolean> {
+  return chrome.permissions.contains({ origins: ALL_SITES });
+}
+
+async function autoReadEnabled(): Promise<boolean> {
+  const { autoRead } = await storage();
+  return autoRead !== false && await autoReadGranted();
+}
+
+/** Keep the rail content script registered exactly when auto-read is on and all-site access is granted. */
+async function syncRailScript(injectOpenTabs = false): Promise<void> {
+  const enabled = await autoReadEnabled();
+  const registered = (await chrome.scripting.getRegisteredContentScripts({ ids: [RAIL_SCRIPT_ID] })).length > 0;
+  if (enabled && !registered) {
+    await chrome.scripting.registerContentScripts([{
+      id: RAIL_SCRIPT_ID, matches: ALL_SITES, js: ['overlay.js'], runAt: 'document_idle', allFrames: false, persistAcrossSessions: true,
+    }]);
+  } else if (!enabled && registered) {
+    await chrome.scripting.unregisterContentScripts({ ids: [RAIL_SCRIPT_ID] });
+  }
+  if (enabled && injectOpenTabs) {
+    // Tabs that were already open only get a newly registered content script after a reload.
+    for (const tab of await normalPublicTabs()) {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['overlay.js'] }).catch(() => undefined);
+    }
+  }
+}
+
+async function apiRequest<T>(path: string): Promise<{ status: number; body?: T }> {
+  const { connectionToken } = await storage();
+  const response = await fetchWithTimeout(`${API_ORIGIN}/api${path}`, {
+    headers: { Authorization: `Bearer ${connectionToken?.trim() || ''}` },
+    cache: 'no-store',
+  }, 8000);
+  return { status: response.status, body: await response.json().catch(() => undefined) as T | undefined };
+}
+
+function senderTab(sender: chrome.runtime.MessageSender): chrome.tabs.Tab & { id: number; url: string } {
+  const tab = sender.tab;
+  if (!tab || typeof tab.id !== 'number' || !tab.url || !publicUrl(tab.url) || sender.frameId !== 0) {
+    throw failureError('UNSUPPORTED_URL', 'Margin shows its rail on public http and https pages only.');
+  }
+  return tab as chrome.tabs.Tab & { id: number; url: string };
+}
+
+async function railBasics(tabId: number): Promise<RailStatus> {
+  const { connectionToken } = await storage();
+  return { tabId, autoRead: await autoReadEnabled(), paired: !!connectionToken?.trim(), online: (await serverStatus()).ok };
+}
+
+function summarize(research: Research): RailResearch {
+  return {
+    id: research.id,
+    status: research.status,
+    progress: research.progress,
+    stage: research.stage,
+    hasBrief: !!research.brief,
+    picks: research.picks?.length ?? 0,
+    related: research.sources.filter(source => source.kind === 'related').length,
+    fromHistory: research.sources.some(source => source.fromHistory),
+    bridge: !!research.bridge,
+  };
+}
+
+/** The research shown for a tab: its mapped record if the URL still matches, else the latest record for that page. */
+async function researchForTab(tab: chrome.tabs.Tab & { id: number; url: string }): Promise<Research | undefined> {
+  const { researchByTab = {} } = await storage();
+  const mapped = researchByTab[String(tab.id)];
+  if (mapped) {
+    const { status, body } = await apiRequest<Research>(`/research/${encodeURIComponent(mapped)}`);
+    if (status === 200 && body && pageKey(body.input.capture.url) === pageKey(tab.url)) return body;
+  }
+  const { status, body } = await apiRequest<Research>(`/research/by-url?url=${encodeURIComponent(tab.url)}`);
+  if (status !== 200 || !body) return undefined;
+  await chrome.storage.local.set({ researchByTab: { ...researchByTab, [String(tab.id)]: body.id } });
+  return body;
+}
+
+async function railStatus(sender: chrome.runtime.MessageSender): Promise<RailStatus> {
+  const tab = senderTab(sender);
+  const basics = await railBasics(tab.id);
+  if (!basics.paired || !basics.online) return basics;
+  const research = await researchForTab(tab).catch(() => undefined);
+  if (research) return { ...basics, research: summarize(research) };
+  const skipped = skippedByTab.get(tab.id);
+  return skipped && skipped.url === pageKey(tab.url) ? { ...basics, skipped: skipped.reason } : basics;
+}
+
+/** Research the sender's page if it is the active tab, auto-read is on, and the page has not been read yet. */
+async function autoRead(sender: chrome.runtime.MessageSender): Promise<RailStatus> {
+  const tab = senderTab(sender);
+  const basics = await railBasics(tab.id);
+  if (!basics.autoRead || !basics.paired || !basics.online || !tab.active || autoReading.has(tab.id)) return railStatus(sender);
+  if (isNativePdf(tab.url)) return { ...basics, skipped: 'Open Margin from the toolbar to read PDFs.' };
+  autoReading.add(tab.id);
+  try {
+    const existing = await researchForTab(tab).catch(() => undefined);
+    if (existing) return { ...basics, research: summarize(existing) };
+    const capture = await captureTab(tab.id);
+    if (capture.coverage !== 'unavailable' && capture.text.trim().length < AUTO_READ_MIN_CHARS) {
+      const reason = 'This page is too short to research automatically. Open the brief to start it yourself.';
+      skippedByTab.set(tab.id, { url: pageKey(tab.url), reason });
+      return { ...basics, skipped: reason };
+    }
+    const { research } = await submitCapture(tab.id, capture, '', 'Reading list', true);
+    skippedByTab.delete(tab.id);
+    return { ...basics, research: summarize(research) };
+  } catch (error) {
+    const response = parseError(error);
+    const reason = 'error' in response ? response.error.message : 'Margin could not read this page automatically.';
+    skippedByTab.set(tab.id, { url: pageKey(tab.url), reason });
+    return { ...basics, skipped: reason };
+  } finally {
+    autoReading.delete(tab.id);
+  }
+}
+
 function parseError(error: unknown): ExtensionResponse<never> {
   if (error && typeof error === 'object' && 'marginError' in error) {
     return { ok: false, error: (error as { marginError: ExtensionError }).marginError };
@@ -265,7 +409,7 @@ function parseError(error: unknown): ExtensionResponse<never> {
   return failure('SERVER_ERROR', error instanceof Error ? error.message : 'Margin could not complete that request.');
 }
 
-async function handleMessage(message: ExtensionRequest): Promise<ExtensionResponse> {
+async function handleMessage(message: ExtensionRequest, sender: chrome.runtime.MessageSender): Promise<ExtensionResponse> {
   if (!message || typeof message !== 'object' || typeof message.type !== 'string') return failure('BAD_REQUEST', 'Margin received an invalid request.');
   switch (message.type) {
     case 'LIST_TABS':
@@ -301,8 +445,24 @@ async function handleMessage(message: ExtensionRequest): Promise<ExtensionRespon
         researchByTab: state.researchByTab || {},
         connectionToken: state.connectionToken || '',
         server: await serverStatus(),
+        autoRead: await autoReadEnabled(),
+        autoReadGranted: await autoReadGranted(),
       } satisfies ExtensionResponse<ExtensionState>;
     }
+    case 'SET_AUTO_READ': {
+      if (message.enabled && !(await autoReadGranted())) {
+        return failure('PERMISSION_REQUIRED', 'Allow Margin to read the sites you visit, then turn on auto-read.', ALL_SITES[0]);
+      }
+      await chrome.storage.local.set({ autoRead: !!message.enabled });
+      await syncRailScript(!!message.enabled);
+      return { ok: true, autoRead: await autoReadEnabled() };
+    }
+    case 'RAIL_READY':
+      return { ok: true, ...(await railBasics(senderTab(sender).id)) };
+    case 'RAIL_AUTO_READ':
+      return { ok: true, ...(await autoRead(sender)) };
+    case 'RAIL_STATUS':
+      return { ok: true, ...(await railStatus(sender)) };
     case 'SETTINGS': {
       if (typeof message.connectionToken !== 'string') return failure('BAD_REQUEST', 'Enter a valid connection token.');
       const connectionToken = message.connectionToken.trim();
@@ -314,11 +474,16 @@ async function handleMessage(message: ExtensionRequest): Promise<ExtensionRespon
   }
 }
 
-chrome.runtime.onMessage.addListener((message: ExtensionRequest, _sender, sendResponse: (response: ExtensionResponse) => void) => {
-  void handleMessage(message).then(sendResponse, (error) => sendResponse(parseError(error)));
+chrome.runtime.onMessage.addListener((message: ExtensionRequest, sender, sendResponse: (response: ExtensionResponse) => void) => {
+  void handleMessage(message, sender).then(sendResponse, (error) => sendResponse(parseError(error)));
   return true;
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+  void syncRailScript(true);
 });
+chrome.runtime.onStartup.addListener(() => void syncRailScript());
+// Granting or revoking all-site access in Chrome's own settings turns the rail on or off.
+chrome.permissions.onAdded.addListener(() => void syncRailScript(true));
+chrome.permissions.onRemoved.addListener(() => void syncRailScript());

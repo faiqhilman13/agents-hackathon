@@ -1,4 +1,4 @@
-import type { Research } from "../shared/schema";
+import type { ReadLink, Research } from "../shared/schema";
 export const isExtension =
   typeof chrome !== "undefined" && !!chrome.runtime?.id;
 export const SERVER = "http://127.0.0.1:4317";
@@ -89,6 +89,29 @@ export async function startResearch(tab: Tab, question: string, enrich = true) {
       enrich,
     })
   ).research;
+}
+// Reading layers 4-7 (see server/layers.ts). Each call runs only when the user asks.
+export type LibraryTurn = { role: "user" | "assistant"; text: string };
+export type LibraryAnswer = { text: string; citations: (ReadLink & { id: string })[] };
+export type Challenge = { text: string; versus?: ReadLink };
+export type GapSource = { id: string; kind: "read" | "web"; title: string; url: string; researchId?: string; publishedDate?: string };
+export type Gap = { title: string; text: string; evidence: string[]; suggestions: string[] };
+export type Reflection = {
+  available: boolean; count: number; since: string;
+  title?: string; throughline?: string; tension?: string; openQuestions?: string[];
+  nextReads?: { title: string; url: string; why: string }[]; reads?: ReadLink[];
+};
+export function askLibrary(message: string, conversation: LibraryTurn[]) {
+  return api<LibraryAnswer>("/library/ask", "POST", { message, conversation });
+}
+export function findGaps(topic: string) {
+  return api<{ gaps: Gap[]; sources: GapSource[] }>("/library/gaps", "POST", { topic });
+}
+export function weeklyReflection() {
+  return api<Reflection>("/library/reflection");
+}
+export function testMyThinking(researchId: string) {
+  return api<{ questions: Challenge[] }>(`/research/${encodeURIComponent(researchId)}/challenge`, "POST", {});
 }
 export function libraryUrl(id?: string) {
   return `${SERVER}/${id ? `?brief=${encodeURIComponent(id)}` : ""}`;

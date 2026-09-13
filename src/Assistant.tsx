@@ -36,10 +36,18 @@ import {
   SourceCitations,
   Spinner,
 } from "./components";
+import { AskView, SourcesView, ThinkingCard } from "./Layers";
 
 const embedded = new URLSearchParams(location.search).has("embedded");
 const embeddedTabId =
   Number(new URLSearchParams(location.search).get("tabId")) || undefined;
+// The rail's three circles open the panel on one of these views.
+type View = "sources" | "brief" | "ask";
+const VIEWS: View[] = ["sources", "brief", "ask"];
+const requestedView = new URLSearchParams(location.search).get("view");
+const initialView: View = VIEWS.includes(requestedView as View)
+  ? (requestedView as View)
+  : "brief";
 
 export function Assistant() {
   const [tabs, setTabs] = useState<Tab[]>([]);
@@ -52,6 +60,7 @@ export function Assistant() {
   const [error, setError] = useState("");
   const [booting, setBooting] = useState(true);
   const [showTabs, setShowTabs] = useState(false);
+  const [view, setView] = useState<View>(initialView);
   const scrollRef = useRef<HTMLDivElement>(null);
   const itemId = useRef<string | undefined>(undefined);
   const lastTab = useRef<number | undefined>(undefined);
@@ -157,10 +166,15 @@ export function Assistant() {
       }
       if (changes.latestResearchId?.newValue && lastTab.current !== undefined)
         void restoreForTab(lastTab.current);
+      // Auto-read creates research in the background; pick it up as soon as it is mapped to this tab.
+      if (changes.researchByTab && lastTab.current !== undefined && !itemId.current)
+        void restoreForTab(lastTab.current);
     };
     chrome.storage.onChanged.addListener(storage);
     const timer = setInterval(() => {
       void refreshTabs();
+      if (!itemId.current && lastTab.current !== undefined)
+        void restoreForTab(lastTab.current);
       const id = itemId.current;
       if (id)
         void api<Research>(`/research/${id}`)
@@ -184,6 +198,29 @@ export function Assistant() {
       itemId.current = undefined;
     }
   }, [activeTab?.url]);
+  useEffect(() => {
+    // The rail on the page switches views when one of its three circles is clicked.
+    const receive = (event: MessageEvent) => {
+      if (event.source !== parent) return;
+      const message = event.data as { source?: string; type?: string; view?: string } | null;
+      if (
+        message?.source === "margin-rail" &&
+        message.type === "VIEW" &&
+        VIEWS.includes(message.view as View)
+      )
+        setView(message.view as View);
+    };
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, []);
+  function switchView(next: View) {
+    setView(next);
+    if (embedded)
+      parent.postMessage(
+        { source: "margin-panel", type: "VIEW_CHANGED", view: next },
+        "*",
+      );
+  }
   useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
@@ -233,6 +270,9 @@ export function Assistant() {
       itemId.current = r.id;
       setItem(r);
       setText("");
+      // Let the rail update its circles right away instead of waiting for its next poll.
+      if (embedded)
+        parent.postMessage({ source: "margin-panel", type: "REFRESH" }, "*");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -353,8 +393,36 @@ export function Assistant() {
           <span className="context-indicator" />
         </div>
       </div>
+      <nav className="view-tabs" aria-label="Margin views">
+        {(
+          [
+            ["sources", "Sources", <Search key="sources" size={15} />],
+            ["brief", "Brief", <FileText key="brief" size={15} />],
+            ["ask", "Ask", <MessageSquare key="ask" size={15} />],
+          ] as const
+        ).map(([value, label, icon]) => (
+          <button
+            key={value}
+            className={view === value ? "active" : ""}
+            aria-pressed={view === value}
+            onClick={() => switchView(value)}
+          >
+            <span className="view-orb">{icon}</span>
+            {label}
+          </button>
+        ))}
+      </nav>
       <div className="assistant-scroll" ref={scrollRef}>
-        {booting ? (
+        {view === "sources" ? (
+          <SourcesView
+            item={item}
+            working={working}
+            busy={busy}
+            onStart={() => void begin("", true)}
+          />
+        ) : view === "ask" ? (
+          <AskView />
+        ) : booting ? (
           <div className="assistant-loading">
             <Spinner />
             Opening your workspace…
@@ -576,6 +644,9 @@ export function Assistant() {
                     View full brief
                   </button>
                 </div>
+                {item.status === "complete" && item.mode !== "demo" && (
+                  <ThinkingCard item={item} onItem={setItem} />
+                )}
                 {item.brief.questions.length > 0 && !item.messages?.length && (
                   <div className="followup-prompts">
                     {item.brief.questions.slice(0, 2).map((q) => (
@@ -620,6 +691,7 @@ export function Assistant() {
           </div>
         )}
       </div>
+      {view === "brief" && (
       <div className="assistant-bottom">
         {error && <ErrorMessage text={error} onClose={() => setError("")} />}
         <form className="composer" onSubmit={send}>
@@ -675,6 +747,7 @@ export function Assistant() {
           Grounded in sources. Guided by you.
         </p>
       </div>
+      )}
     </div>
   );
 }

@@ -5,10 +5,11 @@ import { timingSafeEqual } from 'node:crypto';
 import { Store } from './store';
 import { Configuration, settingsPatchSchema } from './settings';
 import { ResearchQueue } from './research';
-import { researchSchema } from '../shared/schema';
+import { normalizeUrl, researchSchema } from '../shared/schema';
 import { seedDemo } from './demo';
 import { chat } from './chat';
-import type { Providers } from './providers';
+import { providers as realProviders, type Providers } from './providers';
+import { askLibrary, challengeQuestions, findGaps, weeklyReflection } from './layers';
 
 export function createApp(dir:string, options:{port?:number;providers?:Providers;recover?:boolean}={}) {
   const store=new Store(dir); const config=new Configuration(dir); const queue=new ResearchQueue(store,config,options.providers);
@@ -43,6 +44,19 @@ export function createApp(dir:string, options:{port?:number;providers?:Providers
     res.json(config.save(data));
   });
   app.get('/api/research',(_req,res)=>res.json(store.list()));
+  // Auto-read reuses the latest research for a page instead of queueing the same page again.
+  // Registered before /api/research/:id so "by-url" is not treated as an id.
+  app.get('/api/research/by-url',(req,res)=>{
+    const url=typeof req.query.url==='string'?req.query.url:'';
+    let key='';
+    try{key=normalizeUrl(url);}catch{res.status(400).json({error:'Provide a valid page URL.'});return;}
+    const item=store.list().find(entry=>{
+      if(entry.mode==='demo') return false;
+      try{return normalizeUrl(entry.input.capture.url)===key;}catch{return false;}
+    });
+    if(!item){res.status(404).json({error:'No research for this page yet.'});return;}
+    res.json(item);
+  });
   app.get('/api/research/:id',(req,res)=>{const item=store.get(req.params.id); if(!item){res.status(404).json({error:'Brief not found.'});return;}res.json(item);});
   app.post('/api/research',(req,res)=>{
     const data=researchSchema.parse(req.body);
@@ -77,6 +91,32 @@ export function createApp(dir:string, options:{port?:number;providers?:Providers
       if(notes.length>20000) throw new Error('This brief has reached the 20,000-character note limit. Edit or shorten its notes before adding more.');
       res.json(store.update(id,{sources:result.sources,notes,...(result.saveToLibrary?{inLibrary:true}:{}),messages:[...(latest.messages||[]),{role:'user',text:message,createdAt:now},{role:'assistant',text:result.text,sourceIds:result.sourceIds,createdAt:now}].slice(-100) as NonNullable<typeof item.messages>}));
     } finally {chatting.delete(id);}
+  });
+  // Reading layers 4-7. Each runs only when the user asks, and needs a connected language model.
+  const layerContext=(res:express.Response)=>{
+    const settings=config.get(); const providerSet=options.providers ?? realProviders;
+    if(!settings.llmKey || !providerSet.json) {res.status(409).json({error:'Connect a language model in Settings to use this.'});return undefined;}
+    return {settings,json:providerSet.json,search:(query:string,s:typeof settings,signal:AbortSignal)=>providerSet.search(query,s,signal)};
+  };
+  app.post('/api/research/:id/challenge',async(req,res)=>{
+    const item=store.get(req.params.id);
+    if(!item || item.status!=='complete' || !item.brief) {res.status(409).json({error:'Wait for the brief to finish before testing your thinking.'});return;}
+    const context=layerContext(res); if(!context) return;
+    res.json({questions:await challengeQuestions(context.json,item,store.list(),context.settings,AbortSignal.timeout(90000))});
+  });
+  app.post('/api/library/ask',async(req,res)=>{
+    const {message,conversation}=z.object({message:z.string().trim().min(1).max(4000),conversation:z.array(z.object({role:z.enum(['user','assistant']),text:z.string().max(6000)})).max(20).default([])}).parse(req.body);
+    const context=layerContext(res); if(!context) return;
+    res.json(await askLibrary(context.json,message,store.list(),context.settings,AbortSignal.timeout(90000),conversation));
+  });
+  app.post('/api/library/gaps',async(req,res)=>{
+    const {topic}=z.object({topic:z.string().trim().min(3).max(500)}).parse(req.body);
+    const context=layerContext(res); if(!context) return;
+    res.json(await findGaps(context.json,context.search,topic,store.list(),context.settings,AbortSignal.timeout(120000)));
+  });
+  app.get('/api/library/reflection',async(_req,res)=>{
+    const context=layerContext(res); if(!context) return;
+    res.json(await weeklyReflection(context.json,context.search,store.list(),context.settings,AbortSignal.timeout(120000)));
   });
   app.delete('/api/research/:id',(req,res)=>{queue.cancel(req.params.id);store.delete(req.params.id);res.json({ok:true});});
   app.use(express.static(resolve('dist/extension'),{index:'index.html'}));

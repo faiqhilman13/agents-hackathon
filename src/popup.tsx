@@ -32,6 +32,7 @@ function Popup() {
   const [token, setToken] = useState("");
   const [paired, setPaired] = useState(false);
   const [online, setOnline] = useState(false);
+  const [autoRead, setAutoRead] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -39,7 +40,7 @@ function Popup() {
       try {
         const [available, state, win] = await Promise.all([
           listTabs(),
-          extensionMessage<{ connectionToken: string }>({
+          extensionMessage<{ connectionToken: string; autoRead?: boolean }>({
             type: "GET_EXTENSION_STATE",
           }),
           chrome.windows.getCurrent(),
@@ -54,6 +55,7 @@ function Popup() {
         if (selected)
           await extensionMessage({ type: "SELECT_TAB", tabId: selected.id });
         setPaired(!!state.connectionToken);
+        setAutoRead(!!state.autoRead);
         setSetup(!state.connectionToken);
         try {
           await status();
@@ -100,6 +102,29 @@ function Popup() {
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+  async function toggleAutoRead() {
+    setError("");
+    try {
+      if (!autoRead) {
+        // Chrome requires this request inside the click. One grant covers every site,
+        // so Margin can read the tab you are viewing without asking per page.
+        const allowed = await chrome.permissions.request({
+          origins: ["https://*/*", "http://*/*"],
+        });
+        if (!allowed)
+          throw new Error(
+            "Allow Margin to read the sites you visit to turn on auto-read.",
+          );
+      }
+      const result = await extensionMessage<{ autoRead: boolean }>({
+        type: "SET_AUTO_READ",
+        enabled: !autoRead,
+      });
+      setAutoRead(result.autoRead);
+    } catch (e) {
+      setError((e as Error).message);
     }
   }
   async function openAssistant() {
@@ -187,6 +212,24 @@ function Popup() {
             <div />
             <p>BRIEFS IN YOUR LIBRARY</p>
           </div>
+          <button
+            className={`popup-autoread ${autoRead ? "on" : ""}`}
+            onClick={() => void toggleAutoRead()}
+            disabled={!paired || !online}
+            aria-pressed={autoRead}
+          >
+            <span className="popup-autoread-switch">
+              <span />
+            </span>
+            <span>
+              <strong>{autoRead ? "Auto-read is on" : "Turn on auto-read"}</strong>
+              <small>
+                {autoRead
+                  ? "Margin reads the tab you are viewing and keeps its three circles on every page."
+                  : "One click, and Margin reads every page you open. No more enabling each site."}
+              </small>
+            </span>
+          </button>
           <div className="popup-selector">
             <label htmlFor="tab-select">START WITH AN OPEN TAB</label>
             <div className="select-wrap">

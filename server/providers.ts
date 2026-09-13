@@ -4,6 +4,7 @@ import { extractPage } from '../shared/extract';
 import { arxivId, briefSchema, normalizeUrl, publicUrl, type Brief, type Capture, type Source } from '../shared/schema';
 import { modelRequestOptions, type Settings } from './settings';
 import type { RecentRead } from './library';
+import type { JsonModel } from './layers';
 
 export type Providers = {
   resolve: (capture:Capture, settings:Settings, signal:AbortSignal) => Promise<Capture>;
@@ -12,6 +13,8 @@ export type Providers = {
   synthesize: (capture:Capture, question:string, sources:Source[], settings:Settings, signal:AbortSignal, recentReads?:RecentRead[]) => Promise<Brief>;
   // Reading memory: 0-based index of a recent read that strongly overlaps the source, or null. Optional so fakes can omit it.
   historyOverlap?: (source:Source, recentReads:RecentRead[], settings:Settings, signal:AbortSignal) => Promise<number|null>;
+  // Structured JSON model call used by the reading layers (picks, bridges, library chat, gaps, reflection). Optional so fakes can omit it.
+  json?: JsonModel;
 };
 
 class StructuredOutputError extends Error {
@@ -61,6 +64,7 @@ export function validateCitations(brief:Brief, sources:Source[]): Brief {
 }
 
 export const providers: Providers = {
+  json: (system,payload,s,signal,maxTokens) => completion(system,payload,s,signal,maxTokens),
   async resolve(capture,s,signal) {
     const id = arxivId(capture.url);
     if (!id || capture.coverage==='full-text' || capture.coverage==='selection') return capture;

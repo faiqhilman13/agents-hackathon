@@ -42,7 +42,7 @@ export function savedOriginals(message:string, library:Research[], currentId:str
   });
 }
 
-export type RecentRead = { title:string; url:string; readAt:string };
+export type RecentRead = { title:string; url:string; readAt:string; researchId?:string; summary?:string };
 
 /**
  * Reading memory: distinct pages researched before this one, newest first.
@@ -57,7 +57,8 @@ export function recentReads(library:Research[], currentId:string, currentUrl:str
     if(entry.id===currentId || entry.mode==='demo') continue;
     const {url,title}=entry.input.capture; const normalized=key(url);
     if(seen.has(normalized)) continue;
-    seen.add(normalized); reads.push({title,url,readAt:entry.createdAt});
+    seen.add(normalized);
+    reads.push({title,url,readAt:entry.createdAt,researchId:entry.id,...(entry.brief?{summary:entry.brief.overview.text.slice(0,400)}:{})});
   }
   return reads;
 }

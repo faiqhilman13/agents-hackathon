@@ -1,8 +1,9 @@
 import type { Store } from './store';
 import type { Configuration, Settings } from './settings';
 import { extractiveBrief, uniqueSources, providers as realProviders, type Providers } from './providers';
-import { normalizeUrl, type Research, type Source } from '../shared/schema';
+import { normalizeUrl, type ReadingBridge, type Research, type Source, type SourcePick } from '../shared/schema';
 import { recentReads, savedOriginals, wantsExternalSources, wantsLibrary, type RecentRead } from './library';
+import { bridgeReads, pickSources } from './layers';
 
 const SEARCH_STOP_WORDS=new Set(['about','after','also','among','because','between','could','from','have','into','more','most','other','related','research','should','some','such','than','that','their','these','this','those','through','using','what','when','where','which','while','with','would']);
 function searchTerms(value:string) {
@@ -94,8 +95,15 @@ export class ResearchQueue {
         try { brief=await this.providers.synthesize(capture,job.input.question,sources,settings,signal,reads); mode='synthesis'; }
         catch(e) {signal.throwIfAborted();warnings.push('Synthesis was unavailable or failed citation checks. Saved source excerpts instead. '+(e instanceof Error?e.message:''));}
       } else warnings.push('No language model is connected. This is an extractive source digest, not an AI synthesis.');
+      let picks:SourcePick[]=[]; let bridge:ReadingBridge|undefined;
       if(mode==='synthesis') {
-        const used=new Set([brief.overview,...brief.takeaways,...brief.connections].flatMap(f=>f.sourceIds));
+        // Layer 1: choose the sharpest related sources before uncited ones are dropped. Failure is silent.
+        if(this.providers.json && sources.length>1) {
+          update({stage:'Choosing the sharpest sources',progress:84});
+          try { picks=await pickSources(this.providers.json,capture,brief,sources,reads,settings,signal); }
+          catch { signal.throwIfAborted(); }
+        }
+        const used=new Set([...[brief.overview,...brief.takeaways,...brief.connections].flatMap(f=>f.sourceIds),...picks.map(pick=>pick.sourceId)]);
         sources=sources.filter(s=>used.has(s.id));
         if((job.input.enrich||libraryIntent) && sources.length===1 && !warnings.some(w=>w.includes('related-source'))) warnings.push('No external connection was included: the retrieved material did not support a useful, source-linked addition.');
       }
@@ -103,7 +111,13 @@ export class ResearchQueue {
         update({stage:'Checking your recent reading',progress:92});
         sources=await this.annotateHistory(sources,reads,settings,signal);
       }
-      update({brief,mode,sources,warnings:[...new Set(warnings)],status:'complete',stage:'Research ready to discuss',progress:100});
+      // Layer 3: look for a page that bridges two earlier reads. Failure is silent.
+      if(mode==='synthesis' && this.providers.json && reads.filter(read=>read.researchId).length>=2) {
+        update({stage:'Mapping your earlier reading',progress:96});
+        try { bridge=await bridgeReads(this.providers.json,capture,brief,reads,settings,signal); }
+        catch { signal.throwIfAborted(); }
+      }
+      update({brief,mode,sources,picks:picks.length?picks:undefined,bridge,warnings:[...new Set(warnings)],status:'complete',stage:'Research ready to discuss',progress:100});
     } catch(e) {
       if(!signal.aborted && this.store.get(job.id)) this.store.update(job.id,{status:'failed',stage:'Research paused',error:e instanceof Error?e.message:'Research failed. Try again.',warnings});
     } finally { this.active.delete(job.id); }

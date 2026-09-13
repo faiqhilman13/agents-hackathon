@@ -195,6 +195,46 @@ Browser capabilities stay in the Chrome worker; long-running research runs in No
 
 Stack: React 19, TypeScript, Vite, Express 5, built-in Node SQLite, Zod, Readability, and direct provider HTTP calls. Fonts ship through Fontsource. There is no separate vector database or embedding service.
 
+## Auto-read, the rail, and the seven layers
+
+This branch (`margin-seven-layers`) builds on the floating assistant with an always-on rail and seven reading layers.
+
+### Auto-read: enable once
+
+1. Pair the extension as described above.
+2. In the Margin popup, click **Turn on auto-read** and accept Chrome's one-time request to read the sites you visit.
+3. From then on, every public http(s) page shows Margin's rail. When a page has been the visible tab for about 2.5 seconds, Margin researches it automatically (Exa enrichment on). A page is read once: revisiting it reuses its research, and pages with under 600 characters of readable text are skipped.
+
+Click the switch again to pause auto-read. Revoking site access in Chrome also turns it off. Without auto-read, **Open assistant** still works per page.
+
+Auto-read sends each page you linger on to your configured Exa and OpenRouter accounts, so it spends credits as you browse. PDFs still need **Open assistant** because Chrome requires a click to open the side panel.
+
+### The rail: three circles
+
+| Circle | Opens | Layers |
+| --- | --- | --- |
+| **Sources** (search icon) | The three sharpest related sources, each with a one-line reason; a teal bridge card when this page connects two earlier reads. The badge shows the count; a purple dot means you read something close to one of them recently, a teal dot means a bridge was found. | 1, 2, 3 |
+| **Brief** (document icon) | The brief for the whole article, the page conversation, **Add to library**, and **Test my thinking**. A progress ring shows research in flight. | 2, 4 |
+| **Ask** (chat icon) | **Ask** your reading history, **Find gaps** on a topic, and **Reflect** on your week. | 5, 6, 7 |
+
+The circles stay docked on the right of every page. The panel opens beside them and closes back to the circles; **×** under the circles hides Margin for that page load.
+
+### The layers
+
+| Layer | What it does | Where it lives |
+| --- | --- | --- |
+| 1. The Reader | After synthesis, one model call picks up to three related sources (canonical, strongest counterpoint, unexpected connection) with `whyItMatters`. Picked sources are kept even if the brief does not cite them. Stored as `picks`. | `server/layers.ts` `pickSources`, run in `server/research.ts` |
+| 2. The Librarian | Recent reads steer synthesis and picks; related sources that overlap a recent read get `fromHistory` and `readContext` (see [Reading memory](#reading-memory)). | `server/library.ts`, `server/research.ts` |
+| 3. The Cartographer | With at least two earlier reads, one model call checks whether this page connects two of them. Stored as `bridge` with links to both records. | `bridgeReads` |
+| 4. The Interlocutor | **Test my thinking** (click only) asks two Socratic questions, each tied to an earlier read where possible. **Save question** appends it to the brief's notes. | `POST /api/research/:id/challenge` |
+| 5. The Sparring Partner | Answers questions from up to six of your most relevant read pages (drafts included, demos excluded). Citations are validated and mapped to real records, shown as pills. The conversation is kept in extension storage. | `POST /api/library/ask` |
+| 6. Research mode | Ranks your reads for a topic, adds up to six Exa results, and asks for up to three gaps grounded in those ids. Suggestions can only be web results. | `POST /api/library/gaps` |
+| 7. The Reflector | Needs at least two reads in the last seven days. Writes the through-line, the open tension, open questions, and up to three next reads, which are real Exa results you have not read. Cached in the panel for a day. | `GET /api/library/reflection` |
+
+Every layer validates model JSON and maps ids back to stored records or search results, so titles and links always come from real data. Layers 4 to 7 return 409 until a language model is connected. Layers 1 and 3 fail silently: research still completes without picks or a bridge.
+
+`GET /api/research/by-url?url=` returns the latest non-demo research for a page (normalized URL), which auto-read uses to avoid queueing a page twice.
+
 ## Research pipeline and agent actions
 
 ### Initial research
