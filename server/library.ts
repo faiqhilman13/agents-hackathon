@@ -1,4 +1,4 @@
-import { publicUrl, type Research } from '../shared/schema';
+import { normalizeUrl, publicUrl, type Research } from '../shared/schema';
 
 const LIBRARY_INTENT = /\b(?:library|saved(?:\s+(?:research|work|briefs?|papers?|articles?))?|briefs?|collections?|knowledge[ -]?base|notes?|my\s+(?:papers?|research|reading|saved\s+work)|across\s+(?:my\s+)?(?:research|reading))\b/i;
 const EXTERNAL_INTENT = /\b(?:exa|web|internet|online|external|outside|latest|new\s+sources?|current\s+(?:evidence|literature|research))\b/i;
@@ -40,4 +40,24 @@ export function savedOriginals(message:string, library:Research[], currentId:str
     const {id:_id,...original}=candidate.original!;
     return {...original,kind:'related' as const,reason:`Saved brief: ${candidate.entry.brief!.title}`};
   });
+}
+
+export type RecentRead = { title:string; url:string; readAt:string };
+
+/**
+ * Reading memory: distinct pages researched before this one, newest first.
+ * Every capture is already a local record, so no separate log or user ID is needed.
+ * Unsaved drafts count (the user still read them); demos and the current page do not.
+ */
+export function recentReads(library:Research[], currentId:string, currentUrl:string, limit=20):RecentRead[] {
+  const key=(url:string)=>{try{return normalizeUrl(url);}catch{return url;}};
+  const seen=new Set([key(currentUrl)]); const reads:RecentRead[]=[];
+  for(const entry of library) { // Store.list() is newest first.
+    if(reads.length>=limit) break;
+    if(entry.id===currentId || entry.mode==='demo') continue;
+    const {url,title}=entry.input.capture; const normalized=key(url);
+    if(seen.has(normalized)) continue;
+    seen.add(normalized); reads.push({title,url,readAt:entry.createdAt});
+  }
+  return reads;
 }

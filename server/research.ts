@@ -1,8 +1,8 @@
 import type { Store } from './store';
-import type { Configuration } from './settings';
+import type { Configuration, Settings } from './settings';
 import { extractiveBrief, uniqueSources, providers as realProviders, type Providers } from './providers';
-import type { Research } from '../shared/schema';
-import { savedOriginals, wantsExternalSources, wantsLibrary } from './library';
+import { normalizeUrl, type Research, type Source } from '../shared/schema';
+import { recentReads, savedOriginals, wantsExternalSources, wantsLibrary, type RecentRead } from './library';
 
 const SEARCH_STOP_WORDS=new Set(['about','after','also','among','because','between','could','from','have','into','more','most','other','related','research','should','some','such','than','that','their','these','this','those','through','using','what','when','where','which','while','with','would']);
 function searchTerms(value:string) {
@@ -33,6 +33,20 @@ export class ResearchQueue {
     try { for(;;) { const job=this.store.list().reverse().find(r=>r.status==='queued'); if(!job) break; await this.run(job); } }
     finally { this.busy=false; }
   }
+  /** Reading memory: flag related sources that strongly overlap a page read recently. Never fails the job. */
+  private async annotateHistory(sources:Source[],reads:RecentRead[],settings:Settings,signal:AbortSignal):Promise<Source[]> {
+    const key=(url:string)=>{try{return normalizeUrl(url);}catch{return url;}};
+    const readKeys=reads.map(read=>key(read.url));
+    return Promise.all(sources.map(async source=>{
+      if(source.kind==='original') return source;
+      let index=readKeys.indexOf(key(source.url)); // An exact page match needs no model call.
+      if(index<0 && this.providers.historyOverlap) {
+        try { index=(await this.providers.historyOverlap(source,reads,settings,signal)) ?? -1; }
+        catch { signal.throwIfAborted(); index=-1; }
+      }
+      return index>=0 ? {...source,fromHistory:true,readContext:`You read ${reads[index].title} recently.`} : {...source,fromHistory:false};
+    }));
+  }
   private async run(job:Research) {
     const controller=new AbortController(); const signal=controller.signal; this.active.set(job.id,controller);
     const update=(changes:Partial<Research>)=>{signal.throwIfAborted();return this.store.update(job.id,changes);};
@@ -47,6 +61,8 @@ export class ResearchQueue {
       if(capture.text.length>=120000) warnings.push('The captured source was limited to the first 120,000 characters.');
       update({input:{...job.input,capture},sources:uniqueSources(capture,[]),warnings});
       let sources=uniqueSources(capture,[]);
+      // Reading memory: pages researched before this one steer synthesis and flag overlapping sources.
+      const reads=recentReads(this.store.list(),job.id,capture.url);
       const libraryIntent=wantsLibrary(job.input.question);
       const libraryOnly=libraryIntent && !wantsExternalSources(job.input.question);
       if(libraryIntent) {
@@ -75,13 +91,17 @@ export class ResearchQueue {
       let brief=extractiveBrief(capture); let mode:Research['mode']='extractive';
       if(settings.llmKey) {
         if(capture.text.length>45000) warnings.push('The complete source capture is saved, but AI synthesis used the first 45,000 characters. Claims beyond that model context are not represented in the brief.');
-        try { brief=await this.providers.synthesize(capture,job.input.question,sources,settings,signal); mode='synthesis'; }
+        try { brief=await this.providers.synthesize(capture,job.input.question,sources,settings,signal,reads); mode='synthesis'; }
         catch(e) {signal.throwIfAborted();warnings.push('Synthesis was unavailable or failed citation checks. Saved source excerpts instead. '+(e instanceof Error?e.message:''));}
       } else warnings.push('No language model is connected. This is an extractive source digest, not an AI synthesis.');
       if(mode==='synthesis') {
         const used=new Set([brief.overview,...brief.takeaways,...brief.connections].flatMap(f=>f.sourceIds));
         sources=sources.filter(s=>used.has(s.id));
         if((job.input.enrich||libraryIntent) && sources.length===1 && !warnings.some(w=>w.includes('related-source'))) warnings.push('No external connection was included: the retrieved material did not support a useful, source-linked addition.');
+      }
+      if(mode==='synthesis' && reads.length && sources.length>1) {
+        update({stage:'Checking your recent reading',progress:92});
+        sources=await this.annotateHistory(sources,reads,settings,signal);
       }
       update({brief,mode,sources,warnings:[...new Set(warnings)],status:'complete',stage:'Research ready to discuss',progress:100});
     } catch(e) {

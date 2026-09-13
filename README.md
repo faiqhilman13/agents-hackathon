@@ -213,6 +213,17 @@ Extraction stores at most 120,000 characters. Initial synthesis receives the fir
 
 After restart, queued jobs resume; previously running jobs become interrupted/failed and require explicit retry. Cancellation uses an abort signal and prevents a late result from overwriting the canceled state.
 
+### Reading memory
+
+Margin uses what you researched earlier on this installation during initial research. No separate log or user ID is needed: every captured page is already a record in the local store.
+
+1. Before searching, the server lists up to 20 distinct pages researched before this one, newest first. It excludes the current page (by normalized URL) and demos, and includes unsaved drafts because you still read them. Only their titles are used.
+2. Synthesis receives those titles as untrusted data and is told to prefer sources that extend or challenge what the reader already knows, and to deprioritize sources that merely duplicate it.
+3. After a successful synthesis, each retained related source is checked against the recent reads. An exact normalized-URL match is flagged directly; otherwise one small model call asks whether the source strongly overlaps a specific read. A match adds `fromHistory: true` and `readContext: "You read <title> recently."`; no match adds `fromHistory: false`. A failed check counts as no match and never fails the job.
+4. The floating panel, connection cards, and source notebook show the "You read … recently." line on a light purple background.
+
+With no language model, no earlier reads, or an extractive fallback, no overlap check runs and sources keep their previous shape. Reading memory never changes `inLibrary`.
+
 ### Conversational actions
 
 The model returns a **validated JSON action plan**, then a bounded server dispatcher performs it. This is not an arbitrary code executor or general browser-control agent.
@@ -249,7 +260,7 @@ Local retrieval uses keyword-overlap ranking with a recent-candidate fallback, n
 | `id`, `requestId` | Record ID and idempotency key. Reusing an accepted request ID retrieves the existing record; a new UI action creates a new request ID. |
 | `status` | `queued`, `running`, `complete`, `failed`, or `cancelled`. |
 | `input.capture` | URL, title, text, selection, authors, timestamp, coverage. |
-| `sources`, `brief` | Evidence and optional structured synthesis/digest. |
+| `sources`, `brief` | Evidence and optional structured synthesis/digest. Related sources may carry `fromHistory` and `readContext` from reading memory; older records omit them. |
 | `mode` | `synthesis`, `extractive`, or `demo`, independent of completion status. |
 | `inLibrary` | Explicit library membership; new jobs false, legacy missing values treated as saved by consumers. |
 | `notes`, `favorite`, `collection` | User organization; notes limited to 20,000 characters. |

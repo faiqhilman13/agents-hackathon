@@ -77,10 +77,40 @@ export function SourceCitations({
     </span>
   );
 }
+/** Reading memory: true when a cited related source overlaps a page the user read recently. */
+export function citesHistory(ids: string[], sources: Source[]) {
+  return sources.some((s) => s.fromHistory && ids.includes(s.id));
+}
+/** Reading memory: "You read … recently." lines for cited sources, shown above a connection's text. */
+export function HistoryNotes({
+  ids,
+  sources,
+}: {
+  ids: string[];
+  sources: Source[];
+}) {
+  const notes = [
+    ...new Set(
+      sources
+        .filter((s) => s.fromHistory && s.readContext && ids.includes(s.id))
+        .map((s) => s.readContext as string),
+    ),
+  ];
+  if (!notes.length) return null;
+  return (
+    <>
+      {notes.map((note) => (
+        <p className="history-note" key={note}>
+          {note}
+        </p>
+      ))}
+    </>
+  );
+}
 export function SourceCard({ source }: { source: Source }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <div className="source-card">
+    <div className={`source-card${source.fromHistory ? " history" : ""}`}>
       <div className="source-meta">
         <span className="source-num">{Number(source.id.slice(1)) + 1}</span>
         <span>{domain(source.url)}</span>
@@ -97,6 +127,9 @@ export function SourceCard({ source }: { source: Source }) {
         {source.title}
         <ArrowUpRight size={14} />
       </a>
+      {source.fromHistory && source.readContext && (
+        <p className="source-readctx">{source.readContext}</p>
+      )}
       <button className="text-button" onClick={() => setExpanded(!expanded)}>
         {expanded ? "Hide excerpt" : "Read saved excerpt"}
       </button>

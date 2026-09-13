@@ -28,7 +28,9 @@ import {
   type Tab,
 } from "./api";
 import {
+  citesHistory,
   ErrorMessage,
+  HistoryNotes,
   Logo,
   Progress,
   SourceCitations,
@@ -491,8 +493,16 @@ export function Assistant() {
                   <div className="panel-connections">
                     <span className="eyebrow">A LITTLE MORE CONTEXT</span>
                     {item.brief.connections.slice(0, 2).map((c, i) => (
-                      <div key={i}>
+                      <div
+                        key={i}
+                        className={
+                          citesHistory(c.sourceIds, item.sources)
+                            ? "history"
+                            : undefined
+                        }
+                      >
                         <strong>{c.title}</strong>
+                        <HistoryNotes ids={c.sourceIds} sources={item.sources} />
                         <p>
                           {c.text}
                           <SourceCitations

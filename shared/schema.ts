@@ -40,6 +40,8 @@ export type Brief = z.infer<typeof briefSchema>;
 export type Source = {
   id: string; title: string; url: string; text: string; kind: 'original' | 'related';
   publishedDate?: string; authors?: string[]; reason?: string;
+  // Reading memory: set on related sources after synthesis when recent reads exist; older records omit both.
+  fromHistory?: boolean; readContext?: string;
 };
 export type Research = {
   id: string; requestId: string; status: 'queued' | 'running' | 'complete' | 'failed' | 'cancelled';

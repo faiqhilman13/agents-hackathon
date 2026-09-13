@@ -26,6 +26,8 @@ import { api, domain, exportBrief, status } from "./api";
 import {
   EmptyIllustration,
   ErrorMessage,
+  citesHistory,
+  HistoryNotes,
   Logo,
   Progress,
   SourceCard,
@@ -797,11 +799,17 @@ function BriefDetail({
                 </p>
                 {item.brief.connections.length ? (
                   item.brief.connections.map((f, i) => (
-                    <div className="connection-card" key={i}>
+                    <div
+                      className={`connection-card${
+                        citesHistory(f.sourceIds, item.sources) ? " history" : ""
+                      }`}
+                      key={i}
+                    >
                       <span className="relationship">
                         {f.relationship.replace("-", " ")}
                       </span>
                       <h3>{f.title}</h3>
+                      <HistoryNotes ids={f.sourceIds} sources={item.sources} />
                       <p>
                         {f.text}
                         <SourceCitations
