@@ -23,6 +23,8 @@ The default model is **`deepseek/deepseek-v4-flash-0731` through OpenRouter**. A
 
 ## Quick start
 
+This build is on **`margin-floating-assistant`**. The repository's `main` branch contains the team's separate Cortex implementation. Use the branch-specific clone below; do not combine the two builds' extension folders or backend instructions.
+
 ### 1. Prerequisites
 
 | Requirement | Details |
@@ -38,7 +40,7 @@ The initial live flow was verified on macOS. Setup uses ordinary Node/npm comman
 ### 2. Clone, build, and start
 
 ```sh
-git clone https://github.com/faiqhilman13/agents-hackathon.git
+git clone --branch margin-floating-assistant https://github.com/faiqhilman13/agents-hackathon.git
 cd agents-hackathon
 npm ci
 npm run build
