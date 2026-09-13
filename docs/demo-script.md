@@ -28,7 +28,7 @@ Call out any scope warning, such as abstract-only, selected passage, visible soc
 
 ## 1:25–1:50 — Keep the useful part
 
-Choose **Save to library** in the completed panel. Open the local library at `http://localhost:4317`, add a short note, and mark the brief as a favorite. Move away and reopen it from the library.
+Choose **Add to library** in the completed panel. Open the local library at `http://localhost:4317`, add a short note, and mark the brief as a favorite. Move away and reopen it from the library.
 
 Say: “The brief, notes, collection, and favorite state live in the local SQLite library and remain after the server restarts.”
 
