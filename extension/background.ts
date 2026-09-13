@@ -1,4 +1,5 @@
 import { arxivId, normalizeUrl, publicUrl, researchSchema, type Capture, type Research } from '../shared/schema';
+import { staleForProviders } from '../shared/freshness';
 import type {
   ExtensionError,
   ExtensionRequest,
@@ -226,8 +227,8 @@ async function serverStatus(): Promise<ExtensionState['server']> {
   try {
     const response = await fetchWithTimeout(`${API_ORIGIN}/api/status`, { cache: 'no-store' }, 2500);
     if (!response.ok) return { ok: false, error: `Local server returned ${response.status}.` };
-    const body = await response.json() as { configured?: boolean };
-    return { ok: true, ...(typeof body.configured === 'boolean' ? { configured: body.configured } : {}) };
+    const body = await response.json() as { configured?: boolean; exa?: boolean; llm?: boolean };
+    return { ok: true, exa: !!body.exa, llm: !!body.llm, ...(typeof body.configured === 'boolean' ? { configured: body.configured } : {}) };
   } catch {
     return { ok: false, error: 'Start Margin on this computer to research and open your library.' };
   }
@@ -329,10 +330,11 @@ function senderTab(sender: chrome.runtime.MessageSender): chrome.tabs.Tab & { id
 
 async function railBasics(tabId: number): Promise<RailStatus> {
   const { connectionToken } = await storage();
-  return { tabId, autoRead: await autoReadEnabled(), paired: !!connectionToken?.trim(), online: (await serverStatus()).ok };
+  const server = await serverStatus();
+  return { tabId, autoRead: await autoReadEnabled(), paired: !!connectionToken?.trim(), online: server.ok, exa: !!server.exa, llm: !!server.llm };
 }
 
-function summarize(research: Research): RailResearch {
+function summarize(research: Research, providers: { exa: boolean; llm: boolean }): RailResearch {
   return {
     id: research.id,
     status: research.status,
@@ -343,6 +345,7 @@ function summarize(research: Research): RailResearch {
     related: research.sources.filter(source => source.kind === 'related').length,
     fromHistory: research.sources.some(source => source.fromHistory),
     bridge: !!research.bridge,
+    stale: staleForProviders(research, providers),
   };
 }
 
@@ -365,7 +368,7 @@ async function railStatus(sender: chrome.runtime.MessageSender): Promise<RailSta
   const basics = await railBasics(tab.id);
   if (!basics.paired || !basics.online) return basics;
   const research = await researchForTab(tab).catch(() => undefined);
-  if (research) return { ...basics, research: summarize(research) };
+  if (research) return { ...basics, research: summarize(research, basics) };
   const skipped = skippedByTab.get(tab.id);
   return skipped && skipped.url === pageKey(tab.url) ? { ...basics, skipped: skipped.reason } : basics;
 }
@@ -379,7 +382,8 @@ async function autoRead(sender: chrome.runtime.MessageSender): Promise<RailStatu
   autoReading.add(tab.id);
   try {
     const existing = await researchForTab(tab).catch(() => undefined);
-    if (existing) return { ...basics, research: summarize(existing) };
+    // Reuse earlier research unless it was made before Exa or the language model was connected.
+    if (existing && !staleForProviders(existing, basics)) return { ...basics, research: summarize(existing, basics) };
     const capture = await captureTab(tab.id);
     if (capture.coverage !== 'unavailable' && capture.text.trim().length < AUTO_READ_MIN_CHARS) {
       const reason = 'This page is too short to research automatically. Open the brief to start it yourself.';
@@ -388,7 +392,7 @@ async function autoRead(sender: chrome.runtime.MessageSender): Promise<RailStatu
     }
     const { research } = await submitCapture(tab.id, capture, '', 'Reading list', true);
     skippedByTab.delete(tab.id);
-    return { ...basics, research: summarize(research) };
+    return { ...basics, research: summarize(research, basics) };
   } catch (error) {
     const response = parseError(error);
     const reason = 'error' in response ? response.error.message : 'Margin could not read this page automatically.';

@@ -57,6 +57,8 @@ export type RailResearch = {
   related: number;
   fromHistory: boolean;
   bridge: boolean;
+  // Made before Exa or the language model was connected; auto-read reads the page again.
+  stale: boolean;
 };
 
 export type RailStatus = {
@@ -64,6 +66,8 @@ export type RailStatus = {
   autoRead: boolean;
   paired: boolean;
   online: boolean;
+  exa: boolean;
+  llm: boolean;
   research?: RailResearch;
   // Set when the page could not be read automatically (too short, unsupported, or a server error).
   skipped?: string;
@@ -78,7 +82,7 @@ export type ExtensionState = {
   latestResearchId?: string;
   researchByTab?: Record<string, string>;
   connectionToken: string;
-  server: { ok: boolean; configured?: boolean; error?: string };
+  server: { ok: boolean; configured?: boolean; exa?: boolean; llm?: boolean; error?: string };
   autoRead: boolean;
   autoReadGranted: boolean;
 };

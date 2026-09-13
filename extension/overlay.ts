@@ -80,7 +80,8 @@ function init(): void {
   let view: View = 'brief';
   let status: RailStatus | undefined;
   let pageUrl = location.href;
-  let autoRequested = false;
+  // The research id (or "new") auto-read was last requested for, so each page or stale record is tried once.
+  let requestedFor: string | undefined;
   let visibleSince = document.visibilityState === 'visible' ? Date.now() : 0;
   let timer: ReturnType<typeof setInterval> | undefined;
   let listeners: AbortController | undefined;
@@ -214,7 +215,7 @@ function init(): void {
     if (location.href !== pageUrl) {
       // Single-page apps change the URL without reloading: treat it as a new page.
       pageUrl = location.href;
-      autoRequested = false;
+      requestedFor = undefined;
       status = undefined;
       render();
     }
@@ -227,9 +228,11 @@ function init(): void {
     if (!next) return;
     status = next;
     render();
-    const readyToRead = next.autoRead && next.paired && next.online && !next.research && !next.skipped;
-    if (readyToRead && !autoRequested && Date.now() - visibleSince >= DWELL_MS) {
-      autoRequested = true; // One automatic attempt per page; the panel offers a manual start after that.
+    // Read pages with no research yet, and re-read ones made before Exa or the model was connected.
+    const target = !next.research ? (next.skipped ? undefined : 'new') : next.research.stale ? next.research.id : undefined;
+    const readyToRead = next.autoRead && next.paired && next.online && !!target;
+    if (readyToRead && requestedFor !== target && Date.now() - visibleSince >= DWELL_MS) {
+      requestedFor = target; // One automatic attempt per page (or stale record); the panel offers a manual start after that.
       const started = await send<RailStatus>({ type: 'RAIL_AUTO_READ' });
       if (started) {
         status = started;

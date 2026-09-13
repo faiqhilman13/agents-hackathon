@@ -32,6 +32,7 @@ import {
   ErrorMessage,
   HistoryNotes,
   Logo,
+  MathText,
   Progress,
   SourceCitations,
   Spinner,
@@ -539,7 +540,7 @@ export function Assistant() {
                   <span className="mini-mark">m</span>Margin
                 </span>
                 <p>
-                  {item.brief.overview.text}
+                  <MathText text={item.brief.overview.text} />
                   <SourceCitations
                     ids={item.brief.overview.sourceIds}
                     sources={item.sources}
@@ -549,7 +550,7 @@ export function Assistant() {
                   <div className="panel-takeaway" key={i}>
                     <span>{i + 1}</span>
                     <p>
-                      {f.text}
+                      <MathText text={f.text} />
                       <SourceCitations
                         ids={f.sourceIds}
                         sources={item.sources}
@@ -572,7 +573,7 @@ export function Assistant() {
                         <strong>{c.title}</strong>
                         <HistoryNotes ids={c.sourceIds} sources={item.sources} />
                         <p>
-                          {c.text}
+                          <MathText text={c.text} />
                           <SourceCitations
                             ids={c.sourceIds}
                             sources={item.sources}
@@ -668,7 +669,7 @@ export function Assistant() {
                   {m.role === "user" ? "You" : "Margin"}
                 </span>
                 <p>
-                  {m.text}
+                  <MathText text={m.text} />
                   <SourceCitations
                     ids={m.sourceIds || []}
                     sources={item.sources}

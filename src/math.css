@@ -1,0 +1,13 @@
+/* Formulas rendered by KaTeX inside briefs, sources, and answers */
+.math-inline .katex {
+  font-size: 1.02em;
+}
+.math-display {
+  display: block;
+  margin: 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.math-display .katex-display {
+  margin: 0;
+}

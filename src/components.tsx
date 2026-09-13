@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import katex from "katex";
+import { splitMath } from "./mathText";
 import {
   ArrowUpRight,
   BookOpen,
@@ -48,6 +50,34 @@ export function ErrorMessage({
         </button>
       )}
     </div>
+  );
+}
+/** Renders text with TeX formulas ($...$, $$...$$) drawn by KaTeX; everything else stays plain text. */
+export function MathText({ text }: { text: string }) {
+  const segments = useMemo(() => splitMath(text), [text]);
+  if (!segments.some((segment) => segment.kind === "math")) return <>{text}</>;
+  return (
+    <>
+      {segments.map((segment, index) =>
+        segment.kind === "text" ? (
+          <Fragment key={index}>{segment.value}</Fragment>
+        ) : (
+          <span
+            key={index}
+            className={segment.display ? "math-display" : "math-inline"}
+            // KaTeX builds this markup from the TeX and escapes text; with trust off it refuses \href and similar commands.
+            dangerouslySetInnerHTML={{
+              __html: katex.renderToString(segment.value, {
+                displayMode: segment.display,
+                throwOnError: false,
+                trust: false,
+                strict: "ignore",
+              }),
+            }}
+          />
+        ),
+      )}
+    </>
   );
 }
 export function SourceCitations({
@@ -135,7 +165,7 @@ export function SourceCard({ source }: { source: Source }) {
       </button>
       {expanded && (
         <p className="source-excerpt">
-          {source.text.slice(0, 1600)}
+          <MathText text={source.text.slice(0, 1600)} />
           {source.text.length > 1600 ? "…" : ""}
         </p>
       )}

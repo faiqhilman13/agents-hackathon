@@ -59,6 +59,31 @@ test('a selected passage takes precedence over the surrounding page', () => {
   assert.doesNotMatch(capture.text, /rest of this long essay/);
 });
 
+test('formulas are captured once, as TeX, instead of glyphs plus their source', () => {
+  const capture = page(`<!doctype html><title>Dwarf galaxies</title><body><article class="ltx_document">
+    <h1 class="ltx_title">Quenching in dwarf galaxies</h1>
+    <div class="ltx_abstract"><p>We study isolated dwarf galaxies (<math alttext="{M}_{\\star}\\sim 10^{7-9}\\penalty 10000\\ {\\rm M}_{\\odot}" display="inline"><semantics><mrow><msub><mi>M</mi><mo>⋆</mo></msub><mo>∼</mo><msup><mn>10</mn><mrow><mn>7</mn><mo>−</mo><mn>9</mn></mrow></msup></mrow><annotation encoding="application/x-tex">{M}_{\\star}\\sim 10^{7-9}\\penalty 10000\\ {\\rm M}_{\\odot}</annotation></semantics></math>) with no signs of ongoing star formation.</p></div>
+    <p>The halo relation is <math alttext="r \\propto M^{1/3}" display="block"><semantics><mi>r</mi><annotation encoding="application/x-tex">r \\propto M^{1/3}</annotation></semantics></math> for every galaxy in the sample, which the paper then discusses at length in several careful paragraphs of analysis.</p>
+  </article></body>`, 'https://arxiv.org/html/2609.04385v1');
+
+  assert.match(capture.text, /\$\{M\}_\{\\star\}\\sim 10\^\{7-9\}\\ \{\\rm M\}_\{\\odot\}\$/);
+  assert.match(capture.text, /\$\$r \\propto M\^\{1\/3\}\$\$/);
+  assert.doesNotMatch(capture.text, /⋆|∼|107−9|\\penalty/);
+  assert.equal((capture.text.match(/\\odot/g) || []).length, 1, 'each formula appears once');
+  assert.match(capture.description, /\$\{M\}_\{\\star\}/);
+});
+
+test('MathJax 2 formulas keep their TeX script instead of rendered glyphs', () => {
+  const capture = page(`<!doctype html><title>Notes</title><body><article><h1>Notes</h1>
+    <p>Energy is <span class="MathJax_Preview">E=mc2</span><span class="MathJax">E=mc2 glyphs</span><script type="math/tex">E = mc^2</script> in this long enough paragraph about relativity and its many consequences for physics.</p>
+    <p>Display: <script type="math/tex; mode=display">\\int_0^1 x\\,dx</script> closes the argument with a second paragraph of explanatory text for readers.</p>
+  </article></body>`, 'https://example.com/notes');
+
+  assert.match(capture.text, /\$E = mc\^2\$/);
+  assert.match(capture.text, /\$\$\\int_0\^1 x\\,dx\$\$/);
+  assert.doesNotMatch(capture.text, /glyphs|E=mc2/);
+});
+
 test('an arXiv abstract page is labelled as abstract-only', () => {
   const capture = page(`<!doctype html><body>
     <h1 class="title">Title: Evidence-aware systems</h1>

@@ -17,6 +17,7 @@ import {
   domain,
   findGaps,
   isExtension,
+  status,
   testMyThinking,
   weeklyReflection,
   type Challenge,
@@ -26,7 +27,7 @@ import {
   type LibraryTurn,
   type Reflection,
 } from "./api";
-import { ErrorMessage, Spinner } from "./components";
+import { ErrorMessage, MathText, Spinner } from "./components";
 
 // The panel views behind the rail's three circles.
 //   SourcesView  Layer 1 (sharp sources), Layer 2 (you read this before), Layer 3 (bridge card)
@@ -88,6 +89,13 @@ export function SourcesView({
   busy: boolean;
   onStart: () => void;
 }) {
+  // Whether Exa is connected now, to offer a fresh search for pages read before the key was added.
+  const [exaReady, setExaReady] = useState(false);
+  useEffect(() => {
+    void status()
+      .then((current) => setExaReady(!!current.exa))
+      .catch(() => undefined);
+  }, [item?.id]);
   if (!item) {
     return (
       <div className="layer-empty">
@@ -124,7 +132,7 @@ export function SourcesView({
           <span className="eyebrow">
             <MapIcon size={12} /> CONNECTS YOUR READING
           </span>
-          <p>{item.bridge.text}</p>
+          <p><MathText text={item.bridge.text} /></p>
           <div className="pill-row">
             {item.bridge.reads.map((read) => (
               <ReadPill key={read.researchId} read={read} />
@@ -153,14 +161,21 @@ export function SourcesView({
             {source.fromHistory && source.readContext && (
               <span className="sharp-history">{source.readContext}</span>
             )}
-            {pick?.whyItMatters && <span className="sharp-why">{pick.whyItMatters}</span>}
+            {pick?.whyItMatters && <span className="sharp-why"><MathText text={pick.whyItMatters} /></span>}
           </a>
         ))
       ) : (
-        <p className="quiet-empty">
-          {item.warnings.find((warning) => /Exa/.test(warning)) ||
-            "No related source was strong enough to keep for this page."}
-        </p>
+        <div className="quiet-empty">
+          <p>
+            {item.warnings.find((warning) => /Exa/.test(warning)) ||
+              "No related source was strong enough to keep for this page."}
+          </p>
+          {exaReady && item.warnings.some((warning) => warning.startsWith("Exa is not connected")) && (
+            <button className="button primary" onClick={onStart} disabled={busy}>
+              {busy ? <Spinner /> : <Search size={15} />} Exa is connected now: find sources
+            </button>
+          )}
+        </div>
       )}
       <p className="layer-footnote">
         Purple means you read something close to it recently. Teal connects two of your earlier reads.
@@ -213,7 +228,7 @@ export function ThinkingCard({ item, onItem }: { item: Research; onItem: (item: 
           </span>
           {questions.map((question) => (
             <div className="thinking-question" key={question.text}>
-              <p>{question.text}</p>
+              <p><MathText text={question.text} /></p>
               <div className="row between">
                 {question.versus ? (
                   <ReadPill read={question.versus} label={`vs. your reading of ${question.versus.title}`} />
@@ -339,7 +354,7 @@ function AskHistory() {
           {messages.map((message, index) => (
             <div key={index} className={`chat-message ${message.role === "user" ? "user" : "assistant-message"}`}>
               <span className="chat-author">{message.role === "user" ? "You" : "Margin"}</span>
-              <p>{message.text}</p>
+              <p><MathText text={message.text} /></p>
               {!!message.citations?.length && (
                 <div className="pill-row">
                   {message.citations.map((citation) => (
@@ -431,7 +446,7 @@ function FindGaps() {
             <div className="gap-card" key={gap.title}>
               <span className="eyebrow">GAP {index + 1}</span>
               <strong>{gap.title}</strong>
-              <p>{gap.text}</p>
+              <p><MathText text={gap.text} /></p>
               {!!gap.evidence.length && (
                 <div className="pill-row">
                   {gap.evidence.map((id) => byId.get(id)).filter((source): source is GapSource => !!source).map((source) => (
@@ -500,16 +515,16 @@ function WeeklyReflection() {
         <div className="reflection-card">
           <span className="eyebrow">THIS WEEK · {reflection.count} READS</span>
           <h2>{reflection.title}</h2>
-          <p>{reflection.throughline}</p>
+          <p><MathText text={reflection.throughline || ""} /></p>
           {reflection.tension && (
             <p className="reflection-tension">
-              <strong>Left unresolved:</strong> {reflection.tension}
+              <strong>Left unresolved:</strong> <MathText text={reflection.tension} />
             </p>
           )}
           {!!reflection.openQuestions?.length && (
             <ul>
               {reflection.openQuestions.map((question) => (
-                <li key={question}>{question}</li>
+                <li key={question}><MathText text={question} /></li>
               ))}
             </ul>
           )}

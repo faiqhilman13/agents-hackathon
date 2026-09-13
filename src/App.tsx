@@ -29,6 +29,7 @@ import {
   citesHistory,
   HistoryNotes,
   Logo,
+  MathText,
   Progress,
   SourceCard,
   SourceCitations,
@@ -758,7 +759,7 @@ function BriefDetail({
               <section className="brief-overview">
                 <span className="section-kicker">THE BIG PICTURE</span>
                 <p>
-                  {item.brief.overview.text}
+                  <MathText text={item.brief.overview.text} />
                   <SourceCitations
                     ids={item.brief.overview.sourceIds}
                     sources={item.sources}
@@ -779,7 +780,7 @@ function BriefDetail({
                         {String(i + 1).padStart(2, "0")}
                       </span>
                       <p>
-                        {f.text}
+                        <MathText text={f.text} />
                         <SourceCitations
                           ids={f.sourceIds}
                           sources={item.sources}
@@ -811,7 +812,7 @@ function BriefDetail({
                       <h3>{f.title}</h3>
                       <HistoryNotes ids={f.sourceIds} sources={item.sources} />
                       <p>
-                        {f.text}
+                        <MathText text={f.text} />
                         <SourceCitations
                           ids={f.sourceIds}
                           sources={item.sources}
@@ -856,7 +857,7 @@ function BriefDetail({
                           {m.role === "user" ? "YOU" : "MARGIN"}
                         </span>
                         <p>
-                          {m.text}
+                          <MathText text={m.text} />
                           <SourceCitations
                             ids={m.sourceIds || []}
                             sources={item.sources}
